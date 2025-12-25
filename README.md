@@ -10,7 +10,8 @@ In the experiments, the target LLM needs to support the ***head_mask*** paramete
 Otherwise, the following code needs to be added to the LLM source code:
 ```python
 if head_mask is not None:
-    attn_weights = attn_weights * head_mask
+    layer_head_mask = head_mask[self.layer_idx]
+    attn_output = attn_output * layer_head_mask.view(1, -1, 1, 1)
 ```
 Also, the function parameter passing should be updated accordingly.
 
