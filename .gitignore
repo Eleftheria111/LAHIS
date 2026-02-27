@@ -1,0 +1,13 @@
+# Secrets
+.env
+
+# Large data files (regenerate with ted_loader.py)
+data/ted/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Model cache
+*.bin
