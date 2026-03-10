@@ -485,6 +485,10 @@ def load_model(
     local=True,
     load_in_4bit=False,
     load_in_8bit=False,
+    cpu_offload=False,
+    gpu_max_memory=None,
+    cpu_max_memory="48GiB",
+    offload_folder=None,
 ):
     """
     Load a model and tokenizer, then apply the LAHIS head-mask patch.
@@ -557,7 +561,18 @@ def load_model(
         )
         model_kwargs["quantization_config"] = quant_config
         model_kwargs["device_map"] = "auto"
-        print(f"Load model in {'4-bit' if load_in_4bit else '8-bit'} quantized mode")
+        model_kwargs["low_cpu_mem_usage"] = True
+        if cpu_offload:
+            if gpu_max_memory is None:
+                gpu_max_memory = "13GiB"
+            model_kwargs["max_memory"] = {0: gpu_max_memory, "cpu": cpu_max_memory}
+            model_kwargs["offload_folder"] = offload_folder or "/tmp/olmo2_offload"
+            print(
+                f"Load model in {'4-bit' if load_in_4bit else '8-bit'} quantized mode "
+                f"with CPU offload (GPU {gpu_max_memory}, CPU {cpu_max_memory})"
+            )
+        else:
+            print(f"Load model in {'4-bit' if load_in_4bit else '8-bit'} quantized mode")
     elif half_precision:
         model_kwargs["dtype"] = torch.bfloat16
         print("Load model in torch.bfloat16")
