@@ -9,6 +9,10 @@ Supported model names for load_model():
 '''
 
 from transformers import AutoTokenizer, AutoModelForCausalLM
+try:
+    from transformers import BitsAndBytesConfig
+except ImportError:
+    BitsAndBytesConfig = None
 import torch
 import torch.nn.functional as F
 import math
@@ -474,7 +478,14 @@ def clear_lahis_head_mask(model):
 # Load model & tokenizer
 # ---------------------------------------------------------------------------
 
-def load_model(model_name, device, half_precision, local=True):
+def load_model(
+    model_name,
+    device,
+    half_precision=True,
+    local=True,
+    load_in_4bit=False,
+    load_in_8bit=False,
+):
     """
     Load a model and tokenizer, then apply the LAHIS head-mask patch.
 
@@ -522,16 +533,40 @@ def load_model(model_name, device, half_precision, local=True):
     tokenizer.pad_token = tokenizer.eos_token
 
     # ── Load model weights ────────────────────────────────────────────────────
-    if half_precision:
-        print("Load model in torch.bfloat16")
-        model = AutoModelForCausalLM.from_pretrained(
-            model_path, token=HF_TOKEN, dtype=torch.bfloat16
+    model_kwargs = {"token": HF_TOKEN}
+    is_quantized = load_in_4bit or load_in_8bit
+
+    if load_in_4bit and load_in_8bit:
+        raise ValueError("Choose only one quantization mode: 4-bit or 8-bit.")
+
+    if is_quantized:
+        if BitsAndBytesConfig is None:
+            raise ImportError(
+                "BitsAndBytesConfig is unavailable. Install compatible "
+                "transformers and bitsandbytes in Colab."
+            )
+        if "cuda" not in str(device):
+            raise ValueError("4-bit/8-bit loading currently requires a CUDA device.")
+
+        quant_config = BitsAndBytesConfig(
+            load_in_4bit=load_in_4bit,
+            load_in_8bit=load_in_8bit,
+            bnb_4bit_compute_dtype=torch.bfloat16 if half_precision else torch.float16,
+            bnb_4bit_quant_type="nf4",
+            bnb_4bit_use_double_quant=True,
         )
-    else:
-        model = AutoModelForCausalLM.from_pretrained(model_path, token=HF_TOKEN)
+        model_kwargs["quantization_config"] = quant_config
+        model_kwargs["device_map"] = "auto"
+        print(f"Load model in {'4-bit' if load_in_4bit else '8-bit'} quantized mode")
+    elif half_precision:
+        model_kwargs["dtype"] = torch.bfloat16
+        print("Load model in torch.bfloat16")
+
+    model = AutoModelForCausalLM.from_pretrained(model_path, **model_kwargs)
 
     model.eval()
-    model.to(device)
+    if not is_quantized:
+        model.to(device)
 
     # ── Apply LAHIS patch ─────────────────────────────────────────────────────
     # Each architecture needs its own patch because the attention forward()
