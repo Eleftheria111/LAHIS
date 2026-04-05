@@ -162,9 +162,10 @@ def run_specificity_experiment(
 
     Returns a dict:
         {
-          "ori":   {test_lan: ppl_baseline, ...},
-          "masked": {head_lan: {test_lan: ppl, ...}, ...},
-          "delta":  {head_lan: {test_lan: ppl_delta, ...}, ...},
+          "ori":        {test_lan: ppl_baseline, ...},
+          "masked":     {head_lan: {test_lan: ppl, ...}, ...},
+          "delta_abs":  {head_lan: {test_lan: ppl_delta, ...}, ...},
+          "delta_pct":  {head_lan: {test_lan: pct_increase, ...}, ...},
         }
     """
     # --- baseline (all heads kept) ---
@@ -200,15 +201,25 @@ def run_specificity_experiment(
             marker = " <--" if test_lan == head_lan else ""
             print(f"    head={head_lan}, test={test_lan}: {ppl:.2f}{marker}")
 
-    # --- delta = masked - baseline ---
-    delta = {}
+    # --- deltas: absolute and baseline-normalized ---
+    delta_abs = {}
+    delta_pct = {}
     for head_lan, test_ppl_dict in masked_ppl.items():
-        delta[head_lan] = {
-            t: round(test_ppl_dict[t] - ori_ppl.get(t, 0), 3)
-            for t in test_ppl_dict
-        }
+        delta_abs[head_lan] = {}
+        delta_pct[head_lan] = {}
+        for test_lan, masked_ppl_value in test_ppl_dict.items():
+            baseline_ppl = ori_ppl.get(test_lan, 0.0)
+            abs_increase = masked_ppl_value - baseline_ppl
+            pct_increase = 0.0 if baseline_ppl == 0 else 100.0 * abs_increase / baseline_ppl
+            delta_abs[head_lan][test_lan] = round(abs_increase, 3)
+            delta_pct[head_lan][test_lan] = round(pct_increase, 3)
 
-    results = {"ori": ori_ppl, "masked": masked_ppl, "delta": delta}
+    results = {
+        "ori": ori_ppl,
+        "masked": masked_ppl,
+        "delta_abs": delta_abs,
+        "delta_pct": delta_pct,
+    }
     out_path = os.path.join(results_dir, f"specificity_{test_type}_p{int(p*100)}.json")
     with open(out_path, "w") as f:
         json.dump(results, f, indent=2)
@@ -222,7 +233,7 @@ def plot_dark_diagonal(
     languages: list,
     model_name: str,
     output_path: str,
-    value_key: str = "delta",
+    value_key: str = "delta_pct",
 ):
     """
     Plot the (head_lang × test_lang) matrix of PPL deltas.
@@ -249,8 +260,10 @@ def plot_dark_diagonal(
     ax.set_yticklabels([l.upper() for l in languages], fontsize=10)
     ax.set_xlabel("Language tested (text)", fontsize=11)
     ax.set_ylabel("Language whose heads are disabled", fontsize=11)
+    value_label = "PPL % increase vs baseline" if value_key == "delta_pct" else "PPL increase vs baseline"
+    title_metric = "PPL % increase" if value_key == "delta_pct" else "PPL Δ"
     ax.set_title(
-        f"Specificity: PPL Δ when disabling top-2% heads\n"
+        f"Specificity: {title_metric} when disabling top-2% heads\n"
         f"{model_name.upper()} + TED (darker = more hurt)",
         fontsize=12,
     )
@@ -261,7 +274,7 @@ def plot_dark_diagonal(
             ax.text(j, i, f"{mat[i,j]:.1f}", ha="center", va="center",
                     fontsize=8, color="black" if mat[i,j] < mat.max() * 0.6 else "white")
 
-    fig.colorbar(im, ax=ax, label="PPL increase vs baseline")
+    fig.colorbar(im, ax=ax, label=value_label)
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     fig.savefig(output_path, dpi=150, bbox_inches="tight")
     print(f"Dark-diagonal heatmap saved -> {output_path}")

@@ -199,13 +199,16 @@ def patch_llama_for_head_mask(model):
                 hidden_states,
                 attention_mask=None,
                 position_ids=None,
-                past_key_value=None,
+                past_key_values=None,
                 output_attentions=False,
                 use_cache=False,
                 cache_position=None,
                 position_embeddings=None,
                 **kwargs,
             ):
+                past_key_value = past_key_values
+                if past_key_value is None and "past_key_value" in kwargs:
+                    past_key_value = kwargs["past_key_value"]
                 bsz, q_len, _ = hidden_states.size()
 
                 query_states = attn_module.q_proj(hidden_states)
@@ -533,11 +536,33 @@ def load_model(
                          "Use: llama2, olmo2, or hf:<huggingface/path>")
 
     # ── Load tokenizer ────────────────────────────────────────────────────────
-    tokenizer = AutoTokenizer.from_pretrained(model_path, token=HF_TOKEN)
+    tokenizer_kwargs = {"token": HF_TOKEN}
+    if patch_type == "olmo2" or model_name.startswith("hf:"):
+        tokenizer_kwargs["trust_remote_code"] = True
+
+    try:
+        tokenizer = AutoTokenizer.from_pretrained(model_path, **tokenizer_kwargs)
+    except ValueError as e:
+        # Some finetuned OLMo-2 repos only store adapter/model weights and omit
+        # tokenizer metadata. In that case reuse the base OLMo-2 tokenizer.
+        if model_name.startswith("hf:"):
+            print(
+                f"Tokenizer load from '{model_path}' failed ({e}). "
+                f"Falling back to base tokenizer '{OLMO2_NAME}'."
+            )
+            tokenizer = AutoTokenizer.from_pretrained(
+                OLMO2_NAME,
+                token=HF_TOKEN,
+                trust_remote_code=True,
+            )
+        else:
+            raise
     tokenizer.pad_token = tokenizer.eos_token
 
     # ── Load model weights ────────────────────────────────────────────────────
     model_kwargs = {"token": HF_TOKEN}
+    if patch_type == "olmo2" or model_name.startswith("hf:"):
+        model_kwargs["trust_remote_code"] = True
     is_quantized = load_in_4bit or load_in_8bit
 
     if load_in_4bit and load_in_8bit:
@@ -574,7 +599,7 @@ def load_model(
         else:
             print(f"Load model in {'4-bit' if load_in_4bit else '8-bit'} quantized mode")
     elif half_precision:
-        model_kwargs["dtype"] = torch.bfloat16
+        model_kwargs["torch_dtype"] = torch.bfloat16
         print("Load model in torch.bfloat16")
 
     model = AutoModelForCausalLM.from_pretrained(model_path, **model_kwargs)
